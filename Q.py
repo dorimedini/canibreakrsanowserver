@@ -32,7 +32,7 @@ class Q:
         return msg
 
     @staticmethod
-    def generate_test_quantum_run_response(interval=5):
+    def test_quantum_run_response():
         qr = QuantumRegister(2)
         cr = ClassicalRegister(2)
         circuit = QuantumCircuit(qr, cr)
@@ -45,6 +45,5 @@ class Q:
         job = execute(circuit, backend=qcomp)
         while not Q._is_job_done(job):
             yield Q._job_state_response(job)
-            sleep(interval)
         return Q._job_end_response(job, circuit)
 
