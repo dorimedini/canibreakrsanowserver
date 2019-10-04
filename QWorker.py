@@ -13,7 +13,7 @@ class QWorker(object):
 
     def __init__(self, interval=5.0):
         self._interval = interval
-        self._p = Process(target=self._response)
+        self._p = Process(target=self._main)
 
     def start(self):
         return self._p.start()
@@ -21,7 +21,7 @@ class QWorker(object):
     def join(self, *args, **kwargs):
         return self._p.join(*args, **kwargs)
 
-    def _response(self):
+    def _main(self):
         while True:
             request_keys = self.get_request_key_list()
             for key in request_keys:
