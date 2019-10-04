@@ -121,7 +121,12 @@ class QWorker(object):
             QWorker._update_response_file(key, msg)
         print("Job {} done, cleanup in {} seconds".format(key, QWorker.RESPONSE_FILE_LIFESPAN))
         # Cleanup
-        sleep(QWorker.RESPONSE_FILE_LIFESPAN)
+        try:
+            sleep(QWorker.RESPONSE_FILE_LIFESPAN)
+        except KeyboardInterrupt as e:
+            print("Stopped waiting to cleanup {} due to KeyboardInterrupt, cleaning up and propagating...".format(key))
+            QWorker._cleanup_files(key)
+            raise e
         print("Cleaning up files for {}".format(key))
         QWorker._cleanup_files(key)
 
