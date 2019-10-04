@@ -8,6 +8,9 @@ import os
 
 
 class QWorker(object):
+
+    RESPONSE_FILE_LIFESPAN = 60 * 60
+
     def __init__(self, interval=5.0):
         self._interval = interval
         self._p = Process(target=self._response)
@@ -47,6 +50,11 @@ class QWorker(object):
             file.truncate(0)
             file.write(text)
 
+    def _delete_response_file(self, key):
+        path_to_response = QWorker.key_to_response_path(key)
+        if os.path.exists(path_to_response):
+            os.remove(path_to_response)
+
     async def _worker_compute_circuit(self, key, query_interval=5.0):
         job, circ = Q.execute_circuit()
         status = job.status()
@@ -77,6 +85,9 @@ class QWorker(object):
         if status == JobStatus.DONE:
             msg += "\nResult histogram data:\n{}".format(job.result().get_counts(circ))
         self._update_response_file(key, msg)
+        # Cleanup
+        sleep(QWorker.RESPONSE_FILE_LIFESPAN)
+        self._delete_response_file(key)
 
     def _handle_request(self, key):
         response_path = self.key_to_response_path(key)
