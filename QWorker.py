@@ -51,9 +51,12 @@ class QWorker(object):
         job, circ = Q.execute_circuit()
         status = job.status()
         prev_status = None
+        prev_queue_position = -1
+        queue_position = -1
         while status not in [JobStatus.CANCELLED, JobStatus.DONE, JobStatus.ERROR]:
             if status == JobStatus.QUEUED:
-                self._update_response_file(key, "In queue ({})".format(job.queue_position()))
+                queue_position = job.queue_position()
+                self._update_response_file(key, "In queue ({})".format(queue_position))
             elif status == JobStatus.INITIALIZING:
                 self._update_response_file(key, "Initializing job...")
             elif status == JobStatus.RUNNING:
@@ -65,6 +68,9 @@ class QWorker(object):
             if prev_status != status:
                 prev_status = status
                 print("Request {} status updated to {}".format(key, status))
+            if status == JobStatus.QUEUED and prev_queue_position != queue_position:
+                prev_queue_position = queue_position
+                print("Request {} queued ({})".format(key, queue_position))
             sleep(query_interval)
             status = job.status()
         msg = "Job ended with message:\n{}".format(status.value)
