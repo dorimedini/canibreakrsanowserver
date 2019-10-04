@@ -23,7 +23,7 @@ class QWorker(object):
 
     def _main(self):
         while True:
-            request_keys = self.get_request_key_list()
+            request_keys = QWorker.get_request_key_list()
             for key in request_keys:
                 self._handle_request(key)
                 os.remove(QWorker.key_to_request_path(key))
@@ -45,17 +45,20 @@ class QWorker(object):
         with open(response_path, 'r') as file:
             return file.read()
 
-    def _update_response_file(self, key, text):
+    @staticmethod
+    def _update_response_file(key, text):
         with open(QWorker.key_to_response_path(key), 'w') as file:
             file.truncate(0)
             file.write(text)
 
-    def _delete_response_file(self, key):
+    @staticmethod
+    def _delete_response_file(key):
         path_to_response = QWorker.key_to_response_path(key)
         if os.path.exists(path_to_response):
             os.remove(path_to_response)
 
-    async def _worker_compute_circuit(self, key, query_interval=5.0):
+    @staticmethod
+    async def _worker_compute_circuit(key, query_interval=5.0):
         job, circ = Q.execute_circuit()
         status = job.status()
         prev_status = None
@@ -64,15 +67,15 @@ class QWorker(object):
         while status not in [JobStatus.CANCELLED, JobStatus.DONE, JobStatus.ERROR]:
             if status == JobStatus.QUEUED:
                 queue_position = job.queue_position()
-                self._update_response_file(key, "In queue ({})".format(queue_position))
+                QWorker._update_response_file(key, "In queue ({})".format(queue_position))
             elif status == JobStatus.INITIALIZING:
-                self._update_response_file(key, "Initializing job...")
+                QWorker._update_response_file(key, "Initializing job...")
             elif status == JobStatus.RUNNING:
-                self._update_response_file(key, "Running job...")
+                QWorker._update_response_file(key, "Running job...")
             elif status == JobStatus.VALIDATING:
-                self._update_response_file(key, "Validating job...")
+                QWorker._update_response_file(key, "Validating job...")
             else:
-                self._update_response_file(key, "ERROR: Unhandled status '{}'".format(status.name))
+                QWorker._update_response_file(key, "ERROR: Unhandled status '{}'".format(status.name))
             if prev_status != status:
                 prev_status = status
                 print("Request {} status updated to {}".format(key, status))
@@ -90,18 +93,27 @@ class QWorker(object):
         self._delete_response_file(key)
 
     def _handle_request(self, key):
-        response_path = self.key_to_response_path(key)
+        response_path = QWorker.key_to_response_path(key)
         if not os.path.exists(response_path):
-            asyncio.run(self._worker_compute_circuit(key, query_interval=self._interval))
+            asyncio.run(QWorker._worker_compute_circuit(key, query_interval=self._interval))
+
+    @staticmethod
+    def request_dir():
+        return "requests"
 
     @staticmethod
     def key_to_request_path(key):
-        return os.path.join("requests", "{}".format(key))
+        return os.path.join(QWorker.request_dir(), str(key))
+
+    @staticmethod
+    def response_dir():
+        return "responses"
 
     @staticmethod
     def key_to_response_path(key):
-        return os.path.join("responses", "{}".format(key))
+        return os.path.join(QWorker.response_dir(), str(key))
 
-    def get_request_key_list(self):
-        request_dir = QWorker.key_to_request_path("")
+    @staticmethod
+    def get_request_key_list():
+        request_dir = QWorker.request_dir()
         return [f for f in os.listdir(request_dir) if os.path.isfile(os.path.join(request_dir, f))]
