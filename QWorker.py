@@ -27,6 +27,9 @@ class QWorker(object):
             for key in request_keys:
                 self._handle_request(key)
                 os.remove(QWorker.key_to_request_path(key))
+            cancellation_requests = self.get_cancellation_key_list()
+            for key in cancellation_requests:
+                self._handle_cancel(key)
             sleep(self._interval)
 
     @staticmethod
@@ -36,6 +39,13 @@ class QWorker(object):
             Path(request_path).touch()
             return "Created file request for {}".format(key)
         return "Already have request active for {}".format(key)
+
+    @staticmethod
+    def cancel(key):
+        if not QWorker._does_job_exist(key):
+            return "No pending job for {}".format(key)
+        QWorker._handle_cancel(key)
+        return "Cancelling job {}".format(key)
 
     @staticmethod
     def get_response_message(key):
@@ -58,13 +68,29 @@ class QWorker(object):
             os.remove(path_to_response)
 
     @staticmethod
+    def _delete_request_file(key):
+        path_to_request = QWorker.key_to_request_path(key)
+        if os.path.exists(path_to_request):
+            os.remove(path_to_request)
+
+    @staticmethod
+    def _delete_cancellation_file(key):
+        path_to_cancellation = QWorker.key_to_cancellation_path(key)
+        if os.path.exists(path_to_cancellation):
+            os.remove(path_to_cancellation)
+
+    @staticmethod
     async def _worker_compute_circuit(key, query_interval=5.0):
         job, circ = Q.execute_circuit()
         status = job.status()
         prev_status = None
         prev_queue_position = -1
         queue_position = -1
+        job_cancelled = False
         while status not in [JobStatus.CANCELLED, JobStatus.DONE, JobStatus.ERROR]:
+            if QWorker._should_cancel(key):
+                job_cancelled = True
+                break
             if status == JobStatus.QUEUED:
                 queue_position = job.queue_position()
                 QWorker._update_response_file(key, "In queue ({})".format(queue_position))
@@ -84,18 +110,46 @@ class QWorker(object):
                 print("Request {} queued ({})".format(key, queue_position))
             sleep(query_interval)
             status = job.status()
-        msg = "Job ended with message:\n{}".format(status.value)
-        if status == JobStatus.DONE:
-            msg += "\nResult histogram data:\n{}".format(job.result().get_counts(circ))
-        self._update_response_file(key, msg)
+        if job_cancelled:
+            print("Job {} cancelled".format(key))
+            QWorker._update_response_file(key, "Job {} cancelled".format(key))
+        else:
+            msg = "Job ended with message:\n{}".format(status.value)
+            if status == JobStatus.DONE:
+                msg += "\nResult histogram data:\n{}".format(job.result().get_counts(circ))
+            print("Job {} final message: {}".format(key, msg))
+            QWorker._update_response_file(key, msg)
+        print("Job {} done, cleanup in {} seconds".format(key, QWorker.RESPONSE_FILE_LIFESPAN))
         # Cleanup
         sleep(QWorker.RESPONSE_FILE_LIFESPAN)
-        self._delete_response_file(key)
+        print("Cleaning up files for {}".format(key))
+        QWorker._cleanup_files(key)
 
     def _handle_request(self, key):
         response_path = QWorker.key_to_response_path(key)
         if not os.path.exists(response_path):
             asyncio.run(QWorker._worker_compute_circuit(key, query_interval=self._interval))
+
+    @staticmethod
+    def _handle_cancel(key):
+        cancel_path = QWorker.key_to_cancellation_path(key)
+        if not os.path.exists(cancel_path) and QWorker._does_job_exist(key):
+            print("Cancelling job {}".format(key))
+            Path(cancel_path).touch()
+
+    @staticmethod
+    def _cleanup_files(key):
+        QWorker._delete_response_file(key)
+        QWorker._delete_request_file(key)
+        QWorker._delete_cancellation_file(key)
+
+    @staticmethod
+    def _should_cancel(key):
+        return os.path.exists(QWorker.key_to_cancellation_path(key))
+
+    @staticmethod
+    def _does_job_exist(key):
+        return os.path.exists(QWorker.key_to_request_path(key))
 
     @staticmethod
     def request_dir():
@@ -114,6 +168,19 @@ class QWorker(object):
         return os.path.join(QWorker.response_dir(), str(key))
 
     @staticmethod
+    def cancellation_dir():
+        return "cancellations"
+
+    @staticmethod
+    def key_to_cancellation_path(key):
+        return os.path.join(QWorker.cancellation_dir(), str(key))
+
+    @staticmethod
     def get_request_key_list():
         request_dir = QWorker.request_dir()
         return [f for f in os.listdir(request_dir) if os.path.isfile(os.path.join(request_dir, f))]
+
+    @staticmethod
+    def get_cancellation_key_list():
+        cancellation_dir = QWorker.cancellation_dir()
+        return [f for f in os.listdir(cancellation_dir) if os.path.isfile(os.path.join(cancellation_dir, f))]

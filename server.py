@@ -13,6 +13,11 @@ def server_response():
     return QWorker.get_response_message(request.remote_addr)
 
 
+@app.route('/cancel')
+def server_cancel():
+    return QWorker.cancel(request.remote_addr)
+
+
 if __name__ == "__main__":
     worker = QWorker(interval=5)
     worker.start()
