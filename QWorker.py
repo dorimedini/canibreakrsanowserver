@@ -1,6 +1,7 @@
 from multiprocessing import Process
 from pathlib import Path
 from Q import Q
+from QFleet import QFleet
 from qiskit.providers import JobStatus
 from time import sleep
 import asyncio
@@ -82,44 +83,48 @@ class QWorker(object):
 
     @staticmethod
     async def _worker_compute_circuit(key, n, query_interval=5.0):
-        job, circ = Q.execute_circuit()
-        status = job.status()
-        prev_status = None
-        prev_queue_position = -1
-        queue_position = -1
         job_cancelled = False
-        while status not in [JobStatus.CANCELLED, JobStatus.DONE, JobStatus.ERROR]:
-            if QWorker._should_cancel(key, n):
-                job_cancelled = True
-                break
-            if status == JobStatus.QUEUED:
-                queue_position = job.queue_position()
-                QWorker._update_response_file(key, n, "In queue ({})".format(queue_position))
-            elif status == JobStatus.INITIALIZING:
-                QWorker._update_response_file(key, n, "Initializing job...")
-            elif status == JobStatus.RUNNING:
-                QWorker._update_response_file(key, n, "Running job...")
-            elif status == JobStatus.VALIDATING:
-                QWorker._update_response_file(key, n, "Validating job...")
-            else:
-                QWorker._update_response_file(key, n, "ERROR: Unhandled status '{}'".format(status.name))
-            if prev_status != status:
-                prev_status = status
-                print("Request {} (num {}) status updated to {}".format(key, n, status))
-            if status == JobStatus.QUEUED and prev_queue_position != queue_position:
-                prev_queue_position = queue_position
-                print("Request {} (num {}) queued ({})".format(key, n, queue_position))
-            sleep(query_interval)
-            status = job.status()
-        if job_cancelled:
-            print("Job {} (num {}) cancelled".format(key, n))
-            QWorker._update_response_file(key, n, "Job {} (num {}) cancelled".format(key, n))
+        fleet = QFleet()
+        if not fleet.has_viable_backend(n.bit_length()):
+            QWorker._update_response_file(key, n, "No backend viable for {} qubits".format(n.bit_length()))
         else:
-            msg = "Job ended with message:\n{}".format(status.value)
-            if status == JobStatus.DONE:
-                msg += "\nResult histogram data:\n{}".format(job.result().get_counts(circ))
-            print("Job {} (num {}) final message: {}".format(key, n, msg))
-            QWorker._update_response_file(key, n, msg)
+            job, circ = Q.execute_circuit(n)
+            status = job.status()
+            prev_status = None
+            prev_queue_position = -1
+            queue_position = -1
+            while status not in [JobStatus.CANCELLED, JobStatus.DONE, JobStatus.ERROR]:
+                if QWorker._should_cancel(key, n):
+                    job_cancelled = True
+                    break
+                if status == JobStatus.QUEUED:
+                    queue_position = job.queue_position()
+                    QWorker._update_response_file(key, n, "In queue ({})".format(queue_position))
+                elif status == JobStatus.INITIALIZING:
+                    QWorker._update_response_file(key, n, "Initializing job...")
+                elif status == JobStatus.RUNNING:
+                    QWorker._update_response_file(key, n, "Running job...")
+                elif status == JobStatus.VALIDATING:
+                    QWorker._update_response_file(key, n, "Validating job...")
+                else:
+                    QWorker._update_response_file(key, n, "ERROR: Unhandled status '{}'".format(status.name))
+                if prev_status != status:
+                    prev_status = status
+                    print("Request {} (num {}) status updated to {}".format(key, n, status))
+                if status == JobStatus.QUEUED and prev_queue_position != queue_position:
+                    prev_queue_position = queue_position
+                    print("Request {} (num {}) queued ({})".format(key, n, queue_position))
+                sleep(query_interval)
+                status = job.status()
+            if job_cancelled:
+                print("Job {} (num {}) cancelled".format(key, n))
+                QWorker._update_response_file(key, n, "Job {} (num {}) cancelled".format(key, n))
+            else:
+                msg = "Job ended with message:\n{}".format(status.value)
+                if status == JobStatus.DONE:
+                    msg += "\nResult histogram data:\n{}".format(job.result().get_counts(circ))
+                print("Job {} (num {}) final message: {}".format(key, n, msg))
+                QWorker._update_response_file(key, n, msg)
         print("Job {} (num {}) done, cleanup in {} seconds".format(key, n, QWorker.RESPONSE_FILE_LIFESPAN))
         # Cleanup
         try:
