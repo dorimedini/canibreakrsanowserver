@@ -3,19 +3,19 @@ from QWorker import QWorker
 app = Flask(__name__)
 
 
-@app.route('/request')
-def server_request():
-    return QWorker.request(request.remote_addr)
+@app.route('/request/<n>')
+def server_request(n):
+    return QWorker.request(request.remote_addr, n)
 
 
-@app.route('/response')
-def server_response():
-    return QWorker.get_response_message(request.remote_addr)
+@app.route('/response/<n>')
+def server_response(n):
+    return QWorker.get_response_message(request.remote_addr, n)
 
 
-@app.route('/cancel')
-def server_cancel():
-    return QWorker.cancel(request.remote_addr)
+@app.route('/cancel/<n>')
+def server_cancel(n):
+    return QWorker.cancel(request.remote_addr, n)
 
 
 if __name__ == "__main__":
