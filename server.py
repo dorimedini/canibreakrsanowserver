@@ -1,5 +1,6 @@
 from flask import Flask, request
 from QWorker import QWorker
+from threading import Thread
 app = Flask(__name__)
 
 
@@ -19,7 +20,9 @@ def server_cancel(n, a):
 
 
 if __name__ == "__main__":
+    app_thread = Thread(target=app.run,
+                        kwargs={'host': '0.0.0.0', 'use_reloader': False},
+                        daemon=True)
+    app_thread.start()
     worker = QWorker(interval=5)
-    worker.start()
-    app.run(host='0.0.0.0', use_reloader=False)
-    worker.join()
+    worker.run()

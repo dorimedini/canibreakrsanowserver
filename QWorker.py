@@ -1,11 +1,10 @@
-from multiprocessing import Process
 from pathlib import Path
 from Q import Q, QNoBackendException
 from QFleet import QFleet
 from qiskit.aqua.aqua_error import AquaError
 from qiskit.providers import JobStatus
+from threading import Thread
 from time import sleep
-import asyncio
 import os
 import re
 
@@ -16,24 +15,52 @@ class QWorker(object):
 
     def __init__(self, interval=5.0):
         self._interval = interval
-        self._p = Process(target=self._main)
+        self._worker_threads = {}
 
-    def start(self):
-        return self._p.start()
+    def run(self):
+        t_requests = Thread(target=self.process_requests, daemon=True)
+        t_tasks = Thread(target=self.join_tasks, daemon=True)
+        print("Spawning main request handler thread")
+        t_requests.start()
+        print("Spawning main task performer thread")
+        t_tasks.start()
+        print("Waiting to join request handler thread...")
+        t_requests.join()
+        print("Waiting to join task performer thread...")
+        t_tasks.join()
 
-    def join(self, *args, **kwargs):
-        return self._p.join(*args, **kwargs)
-
-    def _main(self):
+    def process_requests(self):
         while True:
             requests = QWorker.get_request_key_list()
+            print("Handling {} new requests".format(len(requests)))
             for key, n, a in requests:
                 self._handle_request(key, n, a)
                 os.remove(QWorker.key_to_request_path(key, n, a))
             cancellation_requests = self.get_cancellation_key_list()
+            print("Handling {} new cancellation requests".format(len(cancellation_requests)))
             for key, n, a in cancellation_requests:
                 self._handle_cancel(key, n, a)
             sleep(self._interval)
+
+    def join_tasks(self):
+        while True:
+            print("Task thread waiting to join {} worker threads (named {})"
+                  "".format(len(self._worker_threads), [k for k in self._worker_threads.keys()]))
+            for t in self._worker_threads.values():
+                if t.is_alive():
+                    t.join()
+            sleep(self._interval)
+
+    def add_task(self, key, n, a):
+        name = QWorker._construct_filename(key, n, a)
+        t = Thread(name=name,
+                   target=QWorker._worker_shor,
+                   args=(key, n, a),
+                   kwargs={'query_interval': self._interval},
+                   daemon=True)
+        self._worker_threads[name] = t
+        t.start()
+        print("Spawned worker thread '{}'".format(name))
 
     @staticmethod
     def request(key, n, a):
@@ -83,7 +110,8 @@ class QWorker(object):
             os.remove(path_to_cancellation)
 
     @staticmethod
-    async def _worker_compute_circuit(key, n, a, query_interval=5.0):
+    def _worker_shor(key, n, a, query_interval=5.0):
+        print("Worker thread for key={}, N={}, a={} started".format(key, n, a))
         def cleanup_after_timeout():
             try:
                 for _ in range(QWorker.RESPONSE_FILE_LIFESPAN // int(query_interval)):
@@ -106,10 +134,12 @@ class QWorker(object):
             try:
                 job, circ = Q.shors_period_finder(n, a)
             except QNoBackendException as e:
+                print("No backend found, updating response and waiting for cleanup...")
                 QWorker._update_response_file(key, n, a, "Couldn't get backend for job: {}".format(e))
                 cleanup_after_timeout()
                 return
             except AquaError as e:
+                print("Aqua error for N={}, a={}: {}".format(n, a, e))
                 QWorker._update_response_file(key, n, a, "Aqua didn't like the input N={},a={}: {}".format(n, a, e))
                 cleanup_after_timeout()
                 return
@@ -119,6 +149,7 @@ class QWorker(object):
             queue_position = -1
             while status not in [JobStatus.CANCELLED, JobStatus.DONE, JobStatus.ERROR]:
                 if QWorker._should_cancel(key, n, a):
+                    job.cancel()
                     job_cancelled = True
                     break
                 if status == JobStatus.QUEUED:
@@ -155,7 +186,7 @@ class QWorker(object):
     def _handle_request(self, key, n, a):
         response_path = QWorker.key_to_response_path(key, n, a)
         if not os.path.exists(response_path):
-            asyncio.run(QWorker._worker_compute_circuit(key, n, a, query_interval=self._interval))
+            self.add_task(key, n, a)
 
     @staticmethod
     def _handle_cancel(key, n, a):
