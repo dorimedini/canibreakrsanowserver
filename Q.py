@@ -6,7 +6,7 @@ from qiskit.circuit import ClassicalRegister, QuantumRegister, QuantumCircuit
 
 class Q:
     @staticmethod
-    def execute_circuit(n):
+    def execute_circuit(n, a):
         QLogin.refresh_login()
         fleet = QFleet()
         required_bits = n.bit_length()
