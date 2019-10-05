@@ -2,6 +2,7 @@ from multiprocessing import Process
 from pathlib import Path
 from Q import Q, QNoBackendException
 from QFleet import QFleet
+from qiskit.aqua.aqua_error import AquaError
 from qiskit.providers import JobStatus
 from time import sleep
 import asyncio
@@ -106,6 +107,10 @@ class QWorker(object):
                 job, circ = Q.shors_period_finder(n, a)
             except QNoBackendException as e:
                 QWorker._update_response_file(key, n, a, "Couldn't get backend for job: {}".format(e))
+                cleanup_after_timeout()
+                return
+            except AquaError as e:
+                QWorker._update_response_file(key, n, a, "Aqua didn't like the input N={},a={}: {}".format(n, a, e))
                 cleanup_after_timeout()
                 return
             status = job.status()
