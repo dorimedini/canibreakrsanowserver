@@ -88,7 +88,7 @@ class QWorker(object):
         if not fleet.has_viable_backend(n.bit_length()):
             QWorker._update_response_file(key, n, a, "No backend viable for {} qubits".format(n.bit_length()))
         else:
-            job, circ = Q.execute_circuit(n, a)
+            job, circ = Q.shors_period_finder(n, a)
             status = job.status()
             prev_status = None
             prev_queue_position = -1

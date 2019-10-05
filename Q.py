@@ -1,26 +1,22 @@
 from QFleet import QFleet
 from QLogin import QLogin
 from qiskit import execute
-from qiskit.circuit import ClassicalRegister, QuantumRegister, QuantumCircuit
+from qiskit.aqua.algorithms.single_sample.shor.shor import Shor
 
 
 class Q:
     @staticmethod
-    def execute_circuit(n, a):
+    def shors_period_finder(n, a, shots=None):
         QLogin.refresh_login()
+        shor = Shor(N=n, a=a)
+        circ = shor.construct_circuit(measurement=True)
         fleet = QFleet()
-        required_bits = n.bit_length()
-        qcomp = fleet.get_best_backend(required_bits)
+        qcomp = fleet.get_best_backend(circ.n_qubits)
         if not qcomp:
-            raise Exception("No viable backend with {} qubits!".format(required_bits))
-        qr = QuantumRegister(required_bits)
-        cr = ClassicalRegister(required_bits)
-        circ = QuantumCircuit(qr, cr)
-        for i in range(required_bits):
-            circ.h(qr[i])
-            if i > 0:
-                circ.cx(qr[i - 1], qr[i])
-        circ.measure(qr, cr)
-        job = execute(circ, backend=qcomp)
+            raise Exception("No viable backend with {} qubits for input N={},a={}".format(circ.n_qubits, n, a))
+        kwargs = {'backend': qcomp}
+        if shots:
+            kwargs['shots'] = shots
+        job = execute(circ, **kwargs)
         print("Started job, status is {}".format(job.status()))
         return job, circ
