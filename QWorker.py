@@ -1,6 +1,6 @@
 from multiprocessing import Process
 from pathlib import Path
-from Q import Q
+from Q import Q, QNoBackendException
 from QFleet import QFleet
 from qiskit.providers import JobStatus
 from time import sleep
@@ -83,12 +83,31 @@ class QWorker(object):
 
     @staticmethod
     async def _worker_compute_circuit(key, n, a, query_interval=5.0):
+        def cleanup_after_timeout():
+            try:
+                for _ in range(QWorker.RESPONSE_FILE_LIFESPAN // int(query_interval)):
+                    sleep(int(query_interval))
+                    if QWorker._should_cancel(key, n, a):
+                        print("Not waiting for cleanup {} (n={}, a={}), cancelling...".format(key, n, a))
+                        break
+            except KeyboardInterrupt as e:
+                print("Stopped waiting to cleanup {} due to KeyboardInterrupt, cleaning up and propagating...".format(key))
+                QWorker._cleanup_files(key, n, a)
+                raise e
+            print("Cleaning up files for {} (num {}, a={})".format(key, n, a))
+            QWorker._cleanup_files(key, n, a)
+
         job_cancelled = False
         fleet = QFleet()
         if not fleet.has_viable_backend(n.bit_length()):
             QWorker._update_response_file(key, n, a, "No backend viable for {} qubits".format(n.bit_length()))
         else:
-            job, circ = Q.shors_period_finder(n, a)
+            try:
+                job, circ = Q.shors_period_finder(n, a)
+            except QNoBackendException as e:
+                QWorker._update_response_file(key, n, a, "Couldn't get backend for job: {}".format(e))
+                cleanup_after_timeout()
+                return
             status = job.status()
             prev_status = None
             prev_queue_position = -1
@@ -126,19 +145,7 @@ class QWorker(object):
                 print("Job {} (num {}, a={}) final message: {}".format(key, n, a, msg))
                 QWorker._update_response_file(key, n, a, msg)
         print("Job {} (num {}, a={}) done, cleanup in {} seconds".format(key, n, a, QWorker.RESPONSE_FILE_LIFESPAN))
-        # Cleanup
-        try:
-            for _ in range(QWorker.RESPONSE_FILE_LIFESPAN // int(query_interval)):
-                sleep(int(query_interval))
-                if QWorker._should_cancel(key, n, a):
-                    print("Not waiting for cleanup {} (n={}, a={}), cancelling...".format(key, n, a))
-                    break
-        except KeyboardInterrupt as e:
-            print("Stopped waiting to cleanup {} due to KeyboardInterrupt, cleaning up and propagating...".format(key))
-            QWorker._cleanup_files(key, n, a)
-            raise e
-        print("Cleaning up files for {} (num {}, a={})".format(key, n, a))
-        QWorker._cleanup_files(key, n, a)
+        cleanup_after_timeout()
 
     def _handle_request(self, key, n, a):
         response_path = QWorker.key_to_response_path(key, n, a)

@@ -4,6 +4,10 @@ from qiskit import execute
 from qiskit.aqua.algorithms.single_sample.shor.shor import Shor
 
 
+class QNoBackendException(Exception):
+    pass
+
+
 class Q:
     @staticmethod
     def shors_period_finder(n, a, shots=None):
@@ -13,7 +17,7 @@ class Q:
         fleet = QFleet()
         qcomp = fleet.get_best_backend(circ.n_qubits)
         if not qcomp:
-            raise Exception("No viable backend with {} qubits for input N={},a={}".format(circ.n_qubits, n, a))
+            raise QNoBackendException("No viable backend with {} qubits for input N={},a={}".format(circ.n_qubits, n, a))
         kwargs = {'backend': qcomp}
         if shots:
             kwargs['shots'] = shots
