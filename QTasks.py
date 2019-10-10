@@ -158,13 +158,13 @@ class _QTasks(object):
         n = job_descriptor.n
         a = job_descriptor.a
         fleet = QFleet()
-        if not fleet.has_viable_backend(n.bit_length()):
+        if not fleet.has_viable_backend(n.bit_length(), allow_simulator=job_descriptor.allow_simulator):
             self._update_status(job_descriptor,
                                 status=JobStatus.ERROR,
                                 error="No backend viable for {} qubits".format(n.bit_length()))
         else:
             try:
-                return Q.shors_period_finder(n, a)
+                return Q.shors_period_finder(job_descriptor)
             except QNoBackendException as e:
                 print("No backend found, updating response and waiting for cleanup...")
                 self._update_status(job_descriptor,
