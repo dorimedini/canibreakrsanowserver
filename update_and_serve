@@ -1,5 +1,13 @@
 #!/bin/bash
 
+repo=canibreakrsanowserver
+
+if [ ! -d "${HOME}/${repo}" ]; then
+  cd "${HOME}" || exit 2
+  git clone https://github.com/dorimedini/${repo}.git || exit 1
+  cd ${repo} || exit 2
+fi
+
 git fetch
 git reset --hard origin/master
 rm -rf requests/* responses/* cancellations/*
