@@ -10,5 +10,4 @@ fi
 
 git fetch
 git reset --hard origin/master
-rm -rf requests/* responses/* cancellations/*
 ./start_server

@@ -1,22 +1,26 @@
 from flask import Flask, request
-from QWorker import QWorker
+from QTasks import QTasks
+from ShorJobDescriptor import ShorJobDescriptor
 from threading import Thread
 app = Flask(__name__)
 
 
-@app.route('/request/<n>/<a>')
-def server_request(n, a):
-    return QWorker.request(request.remote_addr, n, a)
+@app.route('/new_job/<n>/<a>')
+def new_job(n, a):
+    tasks = QTasks()
+    return tasks.request_job(ShorJobDescriptor(request.remote_addr, n, a))
 
 
-@app.route('/response/<n>/<a>')
-def server_response(n, a):
-    return QWorker.get_response_message(request.remote_addr, n, a)
+@app.route('/status/<n>/<a>')
+def status(n, a):
+    tasks = QTasks()
+    return tasks.request_status(ShorJobDescriptor(request.remote_addr, n, a))
 
 
 @app.route('/cancel/<n>/<a>')
-def server_cancel(n, a):
-    return QWorker.cancel(request.remote_addr, n, a)
+def cancel(n, a):
+    tasks = QTasks()
+    return tasks.request_cancel(ShorJobDescriptor(request.remote_addr, n, a))
 
 
 if __name__ == "__main__":
@@ -24,5 +28,6 @@ if __name__ == "__main__":
                         kwargs={'host': '0.0.0.0', 'use_reloader': False},
                         daemon=True)
     app_thread.start()
-    worker = QWorker(interval=5)
-    worker.run()
+    tasks = QTasks()
+    tasks.start()
+    tasks.join()
