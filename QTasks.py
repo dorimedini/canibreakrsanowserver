@@ -118,6 +118,8 @@ class _QTasks(object):
             raise ValueError("Job '{}' updated to ERROR state but no error text provided"
                              "".format(str(job_descriptor)))
         key = str(job_descriptor)
+        print("In update_status for job {}. status: {}, queue: {}, error: {}, results: {}"
+              "".format(key, status, place_in_queue, error, results))
         self._locks[key].acquire_write()
         self._job_states[str(job_descriptor)]['status'] = status
         if status == JobStatus.QUEUED:
@@ -179,31 +181,25 @@ class _QTasks(object):
 
     def _do_job(self, job_descriptor: ShorJobDescriptor):
         key = str(job_descriptor)
+        print("In do_job for job {}".format(key))
         self._locks[key].acquire_read()
         cancellation_event = self._cancellation_events[key]
         self._locks[key].release_read()
         job, circ = self._start_shor_job(job_descriptor)
         if not job:
-            return "Failed to start Shor job"
+            print("Job {} failed to start (backend error)".format(key))
+            return "Failed"
         status = job.status()
-        prev_status = None
-        prev_queue_position = -1
-        queue_position = -1
         while status not in [JobStatus.CANCELLED, JobStatus.DONE, JobStatus.ERROR]:
+            print("do_job iteration for {}, status is {}".format(key, status))
             self._update_status_by_job(job_descriptor, job, circ)
-            if prev_status != status:
-                prev_status = status
-                print("Request {} status updated to {}".format(str(job_descriptor), status))
-            if status == JobStatus.QUEUED and prev_queue_position != queue_position:
-                prev_queue_position = queue_position
-                print("Request {} queued ({})".format(str(job_descriptor), queue_position))
             cancellation_event.wait(timeout=QTasks.INTERNAL_INTERVAL)
             if cancellation_event.is_set():
                 job.cancel()
                 self._update_status(job_descriptor,
                                     status=JobStatus.CANCELLED,
                                     results="Cancelled before completion")
-                return
+                return "Cancelled"
             status = job.status()
         self._update_status_by_job(job_descriptor, job, circ)
         return "Done"
@@ -222,6 +218,7 @@ class _QTasks(object):
                                                              timeout=0.25,
                                                              return_when=concurrent.futures.FIRST_COMPLETED)
                     for future in done:
+                        print("{} threads done, processing results...".format(len(done)))
                         key = str(futures[future])
                         data = None
                         try:
@@ -236,6 +233,7 @@ class _QTasks(object):
                         del futures[future]
                         del self._cancellation_events[key]
                         self._locks[key].release_write()
+                cleaned = 0
                 while pending_cleanup and pending_cleanup[0]['cleanup_time'] <= int(round(time())):
                     key = pending_cleanup[0]['job']
                     self._locks[key].acquire_write()
@@ -243,4 +241,7 @@ class _QTasks(object):
                     self._locks[key].release_write()
                     del self._locks[key]
                     pending_cleanup.pop(0)
+                    cleaned += 1
+                if cleaned:
+                    print("Cleaned up {} old results from memory".format(cleaned))
                 self._abort.wait(timeout=QTasks.EXTERNAL_INTERVAL)
