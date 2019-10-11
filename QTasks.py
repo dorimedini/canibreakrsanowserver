@@ -1,13 +1,22 @@
-from ShorJobDescriptor import ShorJobDescriptor
-from threading import Thread, Event
 from Q import Q, QNoBackendException
 from QFleet import QFleet
 from qiskit.aqua.aqua_error import AquaError
 from qiskit.providers import JobStatus
 from queue import Queue
 from RWLock import RWLock
+from ShorJobDescriptor import ShorJobDescriptor
+from threading import Thread, Event, Lock
 from time import time
 import concurrent.futures
+
+
+def globally_locked(f):
+    def run_only_if_locked(self, *args, **kwargs):
+        if not self._global_lock.locked():
+            print("Not running function {}, global lock is not locked!".format(f.__name__))
+            return
+        return f(self, *args, **kwargs)
+    return run_only_if_locked
 
 
 class QTasks(object):
@@ -33,6 +42,7 @@ class _QTasks(object):
         self._job_states = {}
         self._cancellation_events = {}
         self._locks = {}
+        self._global_lock = Lock()
         self._worker_thread = Thread(target=self._job_handler, daemon=True)
 
     def start(self):
@@ -45,10 +55,13 @@ class _QTasks(object):
         self._abort.set()
 
     def request_job(self, job_descriptor: ShorJobDescriptor):
-        if not self._may_request_job(job_descriptor):
+        self._global_lock.acquire()
+        if str(job_descriptor) in self._locks:
+            self._global_lock.release()
             return "Job '{}' already exists in state '{}'" \
                    "".format(str(job_descriptor), self._state_to_response(self._get_state(job_descriptor)))
         self._submit_job(job_descriptor)
+        self._global_lock.release()
         return "Job '{}' submitted".format(str(job_descriptor))
 
     def request_cancel(self, job_descriptor: ShorJobDescriptor):
@@ -67,6 +80,7 @@ class _QTasks(object):
             return "No such job '{}' found".format(str(job_descriptor))
         return self._state_to_response(state)
 
+    @globally_locked
     def _submit_job(self, job_descriptor: ShorJobDescriptor):
         k = str(job_descriptor)
         self._locks[k] = RWLock()
@@ -106,9 +120,6 @@ class _QTasks(object):
             return "Job hit an error: {}".format(state['error'])
         elif status == JobStatus.CANCELLED:
             return "Job has been cancelled by user, no results available"
-
-    def _may_request_job(self, job_descriptor: ShorJobDescriptor):
-        return str(job_descriptor) not in self._locks
 
     def _update_status(self, job_descriptor: ShorJobDescriptor, status, place_in_queue=-1, results=None, error=None):
         if status == JobStatus.QUEUED and place_in_queue < 0:
@@ -239,7 +250,9 @@ class _QTasks(object):
                     self._locks[key].acquire_write()
                     del self._job_states[key]
                     self._locks[key].release_write()
+                    self._global_lock.acquire()
                     del self._locks[key]
+                    self._global_lock.release()
                     pending_cleanup.pop(0)
                     cleaned += 1
                 if cleaned:
