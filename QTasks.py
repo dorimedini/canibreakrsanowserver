@@ -1,7 +1,8 @@
-from Q import Q, QNoBackendException
 from QFleet import QFleet
+from qiskit import execute
+from qiskit.aqua.algorithms.single_sample.shor.shor import Shor
 from qiskit.aqua.aqua_error import AquaError
-from qiskit.providers import JobStatus
+from qiskit.providers.jobstatus import JobStatus, JOB_FINAL_STATES
 from queue import Queue
 from RWLock import RWLock
 from ShorJobDescriptor import ShorJobDescriptor
@@ -17,6 +18,10 @@ def globally_locked(f):
             return
         return f(self, *args, **kwargs)
     return run_only_if_locked
+
+
+class QNoBackendException(Exception):
+    pass
 
 
 class QTasks(object):
@@ -177,7 +182,7 @@ class _QTasks(object):
                                 error="No backend viable for {} qubits".format(n.bit_length()))
         else:
             try:
-                return Q.shors_period_finder(job_descriptor)
+                return self._shors_period_finder(job_descriptor, fleet)
             except QNoBackendException as e:
                 print("No backend found, updating response and waiting for cleanup...")
                 self._update_status(job_descriptor,
@@ -201,7 +206,7 @@ class _QTasks(object):
             print("Job {} failed to start (backend error)".format(key))
             return "Failed"
         status = job.status()
-        while status not in [JobStatus.CANCELLED, JobStatus.DONE, JobStatus.ERROR]:
+        while status not in JOB_FINAL_STATES:
             print("do_job iteration for {}, status is {}".format(key, status))
             self._update_status_by_job(job_descriptor, job, circ)
             cancellation_event.wait(timeout=QTasks.INTERNAL_INTERVAL)
@@ -258,3 +263,22 @@ class _QTasks(object):
                 if cleaned:
                     print("Cleaned up {} old results from memory".format(cleaned))
                 self._abort.wait(timeout=QTasks.EXTERNAL_INTERVAL)
+
+    def _shors_period_finder(self, job_descriptor: ShorJobDescriptor, fleet: QFleet, shots=None):
+        key = str(job_descriptor)
+        print("Constructing circuit for Shor's algorithm on {}".format(key))
+        n = job_descriptor.n
+        a = job_descriptor.a
+        shor = Shor(N=n, a=a)
+        circ = shor.construct_circuit(measurement=True)
+        print("Constructed circuit for {}, finding backend...".format(key))
+        qcomp = fleet.get_best_backend(circ.n_qubits, job_descriptor.allow_simulator)
+        if not qcomp:
+            raise QNoBackendException("No viable backend with {} qubits for job {}".format(circ.n_qubits, key))
+        print("Got backend '{}' for job {}. Executing...".format(qcomp.name(), key))
+        kwargs = {'backend': qcomp}
+        if shots:
+            kwargs['shots'] = shots
+        job = execute(circ, **kwargs)
+        print("Started job {}, status is {}".format(key, job.status()))
+        return job, circ
