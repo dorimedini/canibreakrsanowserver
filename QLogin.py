@@ -4,6 +4,9 @@ from qiskit.providers.ibmq.exceptions import IBMQAccountError
 from time import sleep
 
 
+IBMQ_TOKEN_FILENAME = "ibmq_api_token"
+
+
 class QLogin(object):
 
     CREDENTIAL_REFRESH_INTERVAL = 5.0
@@ -16,7 +19,7 @@ class QLogin(object):
             except IBMQAccountError as e:
                 print("Couldn't load IBMQ account: {}".format(e))
                 print("Try again, loading API key from file...")
-                with open("ibmq_api_token", 'r') as file:
+                with open(IBMQ_TOKEN_FILENAME, 'r') as file:
                     IBMQ.save_account(file.read())
                 IBMQ.load_account()
         try:

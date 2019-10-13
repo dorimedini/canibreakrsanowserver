@@ -1,4 +1,6 @@
+from argparse import ArgumentParser
 from flask import Flask, request
+from QLogin import IBMQ_TOKEN_FILENAME
 from QTasks import QTasks
 from ShorJobDescriptor import ShorJobDescriptor
 from threading import Thread
@@ -23,11 +25,25 @@ def cancel(n, a):
     return tasks.request_cancel(ShorJobDescriptor(request.remote_addr, n, a))
 
 
+def dump_api_token(token):
+    with open(IBMQ_TOKEN_FILENAME, 'w') as file:
+        file.write(token)
+
+
 if __name__ == "__main__":
+    parser = ArgumentParser(description='"Can I break RSA now?" server')
+    parser.add_argument('-t', '--api-token', type=str)
+    parser.add_argument('-H', '--host', type=str, default='0.0.0.0')
+    args = parser.parse_args()
+
+    if args.api_token:
+        dump_api_token(args.api_token)
+
     app_thread = Thread(target=app.run,
-                        kwargs={'host': '0.0.0.0', 'use_reloader': False},
+                        kwargs={'host': args.host, 'use_reloader': False},
                         daemon=True)
     app_thread.start()
+
     tasks = QTasks()
     tasks.start()
     tasks.join()
