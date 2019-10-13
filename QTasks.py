@@ -2,6 +2,7 @@ from QFleet import QFleet
 from qiskit import execute
 from qiskit.aqua.algorithms.single_sample.shor.shor import Shor
 from qiskit.aqua.aqua_error import AquaError
+from QResponse import QResponse
 from QStatus import QStatus, Q_FINAL_STATES, from_job_status
 from queue import Queue
 from RWLock import RWLock
@@ -60,47 +61,45 @@ class _QTasks(object):
         self._abort.set()
 
     def request_job(self, job_descriptor: ShorJobDescriptor):
+        key = str(job_descriptor)
         self._global_lock.acquire()
-        if str(job_descriptor) in self._locks:
-            self._global_lock.release()
-            return "Job '{}' already exists in state '{}'" \
-                   "".format(str(job_descriptor), self._state_to_response(self._get_state(job_descriptor)))
-        self._submit_job(job_descriptor)
+        if key not in self._locks:
+            self._submit_job(job_descriptor)
         self._global_lock.release()
-        return "Job '{}' submitted".format(str(job_descriptor))
+        return str(self._get_state(job_descriptor))
 
     def request_cancel(self, job_descriptor: ShorJobDescriptor):
+        key = str(job_descriptor)
         state = self._get_state(job_descriptor)
         if not state:
-            return "Job '{}' doesn't exist, nothing to cancel".format(str(job_descriptor))
-        key = str(job_descriptor)
+            return str(QResponse(key,
+                                 status=QStatus.JOB_NOT_FOUND,
+                                 server_response="Job not found. nothing to cancel"))
         self._locks[key].acquire_write()
         self._cancellation_events[key].set()
         self._locks[key].release_write()
-        return "Cancelling job '{}'".format(key)
+        return str(QResponse(key,
+                             status=QStatus.CANCELLED,
+                             server_response="Cancelling job"))
 
     def request_status(self, job_descriptor: ShorJobDescriptor):
+        key = job_descriptor
         state = self._get_state(job_descriptor)
         if not state:
-            return "No such job '{}' found".format(str(job_descriptor))
-        return self._state_to_response(state)
+            return str(QResponse(key, status=QStatus.JOB_NOT_FOUND))
+        return str(state)
 
     @globally_locked
     def _submit_job(self, job_descriptor: ShorJobDescriptor):
         k = str(job_descriptor)
         self._locks[k] = RWLock()
         self._locks[k].acquire_write()
-        self._cancellation_events[str(job_descriptor)] = Event()
-        self._job_states[str(job_descriptor)] = {
-            'status': QStatus.REQUESTED,
-            'place_in_queue': -1,
-            'results': None,
-            'error': None
-        }
+        self._cancellation_events[k] = Event()
+        self._job_states[k] = QResponse(key=k, status=QStatus.REQUESTED)
         self._job_queue.put(job_descriptor)
         self._locks[k].release_write()
 
-    def _get_state(self, job_descriptor: ShorJobDescriptor):
+    def _get_state(self, job_descriptor: ShorJobDescriptor) -> QResponse:
         key = str(job_descriptor)
         state = None
         self._locks[key].acquire_read()
@@ -109,33 +108,12 @@ class _QTasks(object):
         self._locks[key].release_read()
         return state
 
-    def _state_to_response(self, state):
-        status = state['status']
-        if status == QStatus.REQUESTED:
-            return "Job request has been received, waiting for thread to start"
-        if status == QStatus.INITIALIZING:
-            return "Job is initializing on backend..."
-        elif status == QStatus.QUEUED:
-            return "Job is in queue for server. Place in queue: {}".format(state['place_in_queue'])
-        elif status == QStatus.RUNNING:
-            return "Job is running"
-        elif status == QStatus.VALIDATING:
-            return "Job is being validated"
-        elif status == QStatus.DONE:
-            return "Job completed! Results: {}".format(state['results'])
-        elif status == QStatus.ERROR:
-            return "Job hit an error: {}".format(state['error'])
-        elif status == QStatus.CANCELLED:
-            return "Job has been cancelled by user, no results available"
-        elif status == QStatus.CONSTRUCTING_CIRCUIT:
-            return "Job's circuit is under construction"
-        elif status == QStatus.FINDING_BACKEND:
-            return "Searching for capable backend for job"
-        elif status == QStatus.REQUEST_EXECUTE:
-            return "Constructing quantum circuit (could take a minute)"
-        return "UNKNOWN STATUS"
-
-    def _update_status(self, job_descriptor: ShorJobDescriptor, status, place_in_queue=-1, results=None, error=None):
+    def _update_status(self,
+                       job_descriptor: ShorJobDescriptor,
+                       status: QStatus,
+                       place_in_queue=-1,
+                       results=None,
+                       error=None):
         if status == QStatus.QUEUED and place_in_queue < 0:
             raise ValueError("Job '{}' updated to QUEUED state but no place in queue provided"
                              "".format(str(job_descriptor)))
@@ -146,13 +124,14 @@ class _QTasks(object):
         print("In update_status for job {}. status: {}, queue: {}, error: {}, results: {}"
               "".format(key, status, place_in_queue, error, results))
         self._locks[key].acquire_write()
-        self._job_states[str(job_descriptor)]['status'] = status
+        self._job_states[key].status = status
+        self._job_states[key].update_response_from_status()
         if status == QStatus.QUEUED:
-            self._job_states[str(job_descriptor)]['place_in_queue'] = place_in_queue
+            self._job_states[key].queue_position = int(place_in_queue)
         elif status == QStatus.ERROR:
-            self._job_states[str(job_descriptor)]['error'] = error
+            self._job_states[key].error = error
         elif status == QStatus.DONE:
-            self._job_states[str(job_descriptor)]['results'] = results
+            self._job_states[key].result = results
         self._locks[key].release_write()
 
     def _update_status_by_job(self, job_descriptor: ShorJobDescriptor, job, circ):

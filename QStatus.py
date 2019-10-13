@@ -1,5 +1,5 @@
-from qiskit.providers.jobstatus import JobStatus, JOB_FINAL_STATES
 from enum import Enum
+from qiskit.providers.jobstatus import JobStatus, JOB_FINAL_STATES
 
 # noinspection PyArgumentList
 QStatus = Enum(value="JobStatus",
@@ -8,6 +8,7 @@ QStatus = Enum(value="JobStatus",
                    "CONSTRUCTING_CIRCUIT": 'constructing circuit for job',
                    "FINDING_BACKEND": 'looking for capable backend for job',
                    "REQUEST_EXECUTE": 'transpiling and assembling server',
+                   "JOB_NOT_FOUND": 'no such job exists',
                    **{i.name: i.value for i in JobStatus}
                })
 
