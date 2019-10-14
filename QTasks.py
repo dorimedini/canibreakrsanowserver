@@ -9,13 +9,14 @@ from RWLock import RWLock
 from ShorJobDescriptor import ShorJobDescriptor
 from threading import Thread, Event, Lock
 from time import time
+from verbose import Verbose
 import concurrent.futures
 
 
 def globally_locked(f):
     def run_only_if_locked(self, *args, **kwargs):
         if not self._global_lock.locked():
-            print("Not running function {}, global lock is not locked!".format(f.__name__))
+            self.logger.debug("Not running function {}, global lock is not locked!".format(f.__name__))
             return
         return f(self, *args, **kwargs)
     return run_only_if_locked
@@ -40,9 +41,10 @@ class QTasks(object):
         return getattr(self._instance, item)
 
 
-class _QTasks(object):
+class _QTasks(Verbose):
 
     def __init__(self, *args, **kwargs):
+        super(_QTasks, self).__init__(name="QTasks")
         self._abort = Event()
         self._job_queue = Queue()
         self._job_states = {}
@@ -121,8 +123,8 @@ class _QTasks(object):
             raise ValueError("Job '{}' updated to ERROR state but no error text provided"
                              "".format(str(job_descriptor)))
         key = str(job_descriptor)
-        print("In update_status for job {}. status: {}, queue: {}, error: {}, results: {}"
-              "".format(key, status, place_in_queue, error, results))
+        self.logger.debug("In update_status for job {}. status: {}, queue: {}, error: {}, results: {}"
+                          "".format(key, status, place_in_queue, error, results))
         self._locks[key].acquire_write()
         self._job_states[key].status = status
         self._job_states[key].update_response_from_status()
@@ -176,12 +178,12 @@ class _QTasks(object):
             try:
                 return self._shors_period_finder(job_descriptor, fleet)
             except QNoBackendException as e:
-                print("No backend found, updating response and waiting for cleanup...")
+                self.logger.debug("No backend found, updating response and waiting for cleanup...")
                 self._update_status(job_descriptor,
                                     status=QStatus.ERROR,
                                     error="Couldn't get backend for job: {}".format(e))
             except AquaError as e:
-                print("Aqua error for N={}, a={}: {}".format(n, a, e))
+                self.logger.debug("Aqua error for N={}, a={}: {}".format(n, a, e))
                 self._update_status(job_descriptor,
                                     status=QStatus.ERROR,
                                     error="Aqua didn't like the input N={},a={}: {}".format(n, a, e))
@@ -189,17 +191,17 @@ class _QTasks(object):
 
     def _do_job(self, job_descriptor: ShorJobDescriptor):
         key = str(job_descriptor)
-        print("In do_job for job {}".format(key))
+        self.logger.debug("In do_job for job {}".format(key))
         self._locks[key].acquire_read()
         cancellation_event = self._cancellation_events[key]
         self._locks[key].release_read()
         job, circ = self._start_shor_job(job_descriptor)
         if not job:
-            print("Job {} failed to start (backend error)".format(key))
+            self.logger.debug("Job {} failed to start (backend error)".format(key))
             return "Failed"
         status = job.status()
         while status not in Q_FINAL_STATES:
-            print("do_job iteration for {}, status is {}".format(key, status))
+            self.logger.debug("do_job iteration for {}, status is {}".format(key, status))
             self._update_status_by_job(job_descriptor, job, circ)
             cancellation_event.wait(timeout=QTasks.INTERNAL_INTERVAL)
             if cancellation_event.is_set():
@@ -210,29 +212,37 @@ class _QTasks(object):
                 return "Cancelled"
             status = job.status()
         self._update_status_by_job(job_descriptor, job, circ)
+        self.logger.debug("do_job done for {}".format(key))
         return "Done"
 
     def _job_handler(self):
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = {}
             pending_cleanup = []
+            log_every_n_iterations = 100
+            iteration = 0
+            handled_queue_items = 0
+            done_futures = 0
+            cleaned = 0
+            self.logger.debug("Starting main handler loop")
             while not self._abort.is_set():
                 while not self._job_queue.empty():
                     job_descriptor = self._job_queue.get()
                     futures[executor.submit(self._do_job, job_descriptor)] = str(job_descriptor)
+                    handled_queue_items += 1
                 if futures:
                     # Check for status of the futures which are currently working
                     done, not_done = concurrent.futures.wait(futures,
                                                              timeout=0.25,
                                                              return_when=concurrent.futures.FIRST_COMPLETED)
                     for future in done:
-                        print("{} threads done, processing results...".format(len(done)))
+                        self.logger.debug("{} threads done, processing results...".format(len(done)))
                         key = str(futures[future])
                         data = None
                         try:
                             data = future.result()
                         except Exception as e:
-                            print("Job {} failed with data: {}\n\nException:\n{}".format(key, data, e))
+                            self.logger.debug("Job {} failed with data: {}\n\nException:\n{}".format(key, data, e))
                         pending_cleanup.append({
                             'job': key,
                             'cleanup_time': QTasks.CLEANUP_TIMEOUT + int(round(time()))
@@ -241,7 +251,7 @@ class _QTasks(object):
                         del futures[future]
                         del self._cancellation_events[key]
                         self._locks[key].release_write()
-                cleaned = 0
+                        done_futures += 1
                 while pending_cleanup and pending_cleanup[0]['cleanup_time'] <= int(round(time())):
                     key = pending_cleanup[0]['job']
                     self._locks[key].acquire_write()
@@ -252,32 +262,39 @@ class _QTasks(object):
                     self._global_lock.release()
                     pending_cleanup.pop(0)
                     cleaned += 1
-                if cleaned:
-                    print("Cleaned up {} old results from memory".format(cleaned))
+                if iteration == log_every_n_iterations:
+                    self.logger.debug("Reached {} handler iterations. Got {} queue items, {} done futures, {} cleaned "
+                                      "responses".format(log_every_n_iterations, handled_queue_items, done_futures,
+                                                         cleaned))
+                    handled_queue_items = 0
+                    done_futures = 0
+                    cleaned = 0
+                    iteration = 0
+                iteration += 1
                 self._abort.wait(timeout=QTasks.EXTERNAL_INTERVAL)
 
     def _shors_period_finder(self, job_descriptor: ShorJobDescriptor, fleet: QFleet, shots=None):
         key = str(job_descriptor)
-        print("Constructing circuit for Shor's algorithm on {}".format(key))
+        self.logger.debug("Constructing circuit for Shor's algorithm on {}".format(key))
         self._update_status(job_descriptor,
                             status=QStatus.CONSTRUCTING_CIRCUIT)
         n = job_descriptor.n
         a = job_descriptor.a
         shor = Shor(N=n, a=a)
         circ = shor.construct_circuit(measurement=True)
-        print("Constructed circuit for {}, finding backend...".format(key))
+        self.logger.debug("Constructed circuit for {}, finding backend...".format(key))
         self._update_status(job_descriptor,
                             status=QStatus.FINDING_BACKEND)
         qcomp = fleet.get_best_backend(circ.n_qubits, job_descriptor.allow_simulator)
         if not qcomp:
             raise QNoBackendException("No viable backend with {} qubits for job {}".format(circ.n_qubits, key))
-        print("Got backend '{}' for job {}. Executing...".format(qcomp.name(), key))
+        self.logger.debug("Got backend '{}' for job {}. Executing...".format(qcomp.name(), key))
         self._update_status(job_descriptor,
                             status=QStatus.REQUEST_EXECUTE)
         kwargs = {'backend': qcomp}
         if shots:
             kwargs['shots'] = shots
         job = execute(circ, **kwargs)
-        print("Started job {}, status is {}".format(key, job.status()))
+        self.logger.debug("Started job {}, status is {}".format(key, job.status()))
         self._update_status_by_job(job_descriptor, job, circ)
         return job, circ
