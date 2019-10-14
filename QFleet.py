@@ -10,20 +10,22 @@ class QFleet(object):
         for provider in self._providers:
             self._backends[str(provider)] = provider.backends()
 
-    def _is_simulator(self, backend):
+    @staticmethod
+    def is_simulator(backend):
         return backend.configuration().simulator
 
     def _pending_jobs(self, backend):
         return backend.status().pending_jobs
 
-    def _n_qubits(self, backend):
+    @staticmethod
+    def n_qubits(backend):
         return backend.configuration().n_qubits
 
     def _is_real_viable(self, backend, min_qubits):
-        return (not self._is_simulator(backend)) and min_qubits <= self._n_qubits(backend)
+        return (not QFleet.is_simulator(backend)) and min_qubits <= QFleet.n_qubits(backend)
 
     def _is_sim_viable(self, backend, min_qubits):
-        return self._is_simulator(backend) and min_qubits <= self._n_qubits(backend)
+        return QFleet.is_simulator(backend) and min_qubits <= QFleet.n_qubits(backend)
 
     def _is_viable(self, backend, min_qubits, allow_simulator):
         return self._is_real_viable(backend, min_qubits) or (allow_simulator and self._is_sim_viable(backend, min_qubits))
@@ -32,7 +34,7 @@ class QFleet(object):
         best_real = None
         best_sim = None
         for backend in candidates:
-            if self._is_simulator(backend):
+            if QFleet.is_simulator(backend):
                 if not best_sim or self._pending_jobs(best_sim) > self._pending_jobs(backend):
                     best_sim = backend
             else:
@@ -49,7 +51,7 @@ class QFleet(object):
                 if self._is_viable(backend, min_qubits, allow_simulator):
                     print("Adding backend with {} pending jobs ({} qubits)"
                           "".format(self._pending_jobs(backend),
-                                    self._n_qubits(backend)))
+                                    QFleet.n_qubits(backend)))
                     candidates.append(backend)
         if not candidates:
             print("No backend has at least {} qubits!".format(min_qubits))
@@ -57,8 +59,8 @@ class QFleet(object):
         chosen = self._best_valid_backend(candidates)
         print("Chose backend with {} pending jobs ({} qubits{})"
               "".format(self._pending_jobs(chosen),
-                        self._n_qubits(chosen),
-                        ", simulator" if self._is_simulator(chosen) else ""))
+                        QFleet.n_qubits(chosen),
+                        ", simulator" if QFleet.is_simulator(chosen) else ""))
         return chosen
 
     def has_viable_backend(self, min_qubits, allow_simulator):

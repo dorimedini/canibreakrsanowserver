@@ -142,19 +142,20 @@ class _QTasks(Verbose):
         del self._job_states[key]
 
     @write_locked
-    def _update_status_internal(self, key, status, queue_pos, results, error):
-        self._job_states[key].status = status
-        self._job_states[key].update_response_from_status()
-        if status == QStatus.QUEUED:
-            self._job_states[key].queue_position = int(queue_pos)
-        elif status == QStatus.ERROR:
-            self._job_states[key].error = error
-        elif status == QStatus.DONE:
-            self._job_states[key].result = results
+    def _update_status_internal(self, key, status, backend, queue_pos, results, error):
+        self._job_states[key] = QResponse(
+            key=key,
+            status=status,
+            backend=backend,
+            queue_position=queue_pos,
+            result=results,
+            error=error
+        )
 
     def _update_status(self,
                        job_descriptor: ShorJobDescriptor,
                        status: QStatus,
+                       backend=None,
                        place_in_queue=-1,
                        results=None,
                        error=None):
@@ -165,9 +166,10 @@ class _QTasks(Verbose):
             raise ValueError("Job '{}' updated to ERROR state but no error text provided"
                              "".format(str(job_descriptor)))
         key = str(job_descriptor)
-        self.logger.debug("In update_status for job {}. status: {}, queue: {}, error: {}, results: {}"
-                          "".format(key, status, place_in_queue, error, results))
-        self._update_status_internal(key, status, place_in_queue, results, error)
+        backend_name = None if not backend else backend.name()
+        self.logger.debug("In update_status for job {}. status: {}, backend: {}, queue: {}, error: {}, results: {}"
+                          "".format(key, status, backend_name, place_in_queue, error, results))
+        self._update_status_internal(key, status, backend, place_in_queue, results, error)
 
     def _update_status_by_job(self, job_descriptor: ShorJobDescriptor, job, circ):
         status = from_job_status(job.status())
@@ -314,7 +316,8 @@ class _QTasks(Verbose):
             raise QNoBackendException("No viable backend with {} qubits for job {}".format(circ.n_qubits, key))
         self.logger.debug("Got backend '{}' for job {}. Executing...".format(qcomp.name(), key))
         self._update_status(job_descriptor,
-                            status=QStatus.REQUEST_EXECUTE)
+                            status=QStatus.REQUEST_EXECUTE,
+                            backend=qcomp)
         kwargs = {'backend': qcomp}
         if shots:
             kwargs['shots'] = shots
