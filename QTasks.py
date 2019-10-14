@@ -143,8 +143,8 @@ class _QTasks(Verbose):
 
     @write_locked
     def _update_status_internal(self, key, status, backend, queue_pos, results, error):
-        self._job_states[key] = QResponse(
-            key=key,
+        self._job_states[key] = QResponse.update(
+            self._job_states[key],
             status=status,
             backend=backend,
             queue_position=queue_pos,

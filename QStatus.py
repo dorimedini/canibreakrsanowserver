@@ -13,7 +13,7 @@ QStatus = Enum(value="JobStatus",
                })
 
 
-Q_FINAL_STATES = JOB_FINAL_STATES
+Q_FINAL_STATES = JOB_FINAL_STATES + ("JOB_NOT_FOUND",)
 
 
 def from_job_status(job_status: JobStatus):
