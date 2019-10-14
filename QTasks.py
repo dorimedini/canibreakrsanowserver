@@ -7,19 +7,10 @@ from QStatus import QStatus, Q_FINAL_STATES, from_job_status
 from queue import Queue
 from RWLock import RWLock
 from ShorJobDescriptor import ShorJobDescriptor
-from threading import Thread, Event, Lock
+from threading import Thread, Event
 from time import time
 from verbose import Verbose
 import concurrent.futures
-
-
-def globally_locked(f):
-    def run_only_if_locked(self, *args, **kwargs):
-        if not self._global_lock.locked():
-            self.logger.debug("Not running function {}, global lock is not locked!".format(f.__name__))
-            return
-        return f(self, *args, **kwargs)
-    return run_only_if_locked
 
 
 class QNoBackendException(Exception):
@@ -49,8 +40,7 @@ class _QTasks(Verbose):
         self._job_queue = Queue()
         self._job_states = {}
         self._cancellation_events = {}
-        self._locks = {}
-        self._global_lock = Lock()
+        self._rw_lock = RWLock()
         self._worker_thread = Thread(target=self._job_handler, daemon=True)
 
     def start(self):
@@ -64,10 +54,15 @@ class _QTasks(Verbose):
 
     def request_job(self, job_descriptor: ShorJobDescriptor):
         key = str(job_descriptor)
-        self._global_lock.acquire()
-        if key not in self._locks:
-            self._submit_job(job_descriptor)
-        self._global_lock.release()
+        self._rw_lock.acquire_read()
+        if key in self._job_states:
+            state = self._job_states[key]
+            self._rw_lock.release_read()
+            return str(state)
+        self._rw_lock.release_read()
+        self._rw_lock.acquire_write()
+        self._submit_job(job_descriptor)
+        self._rw_lock.release_write()
         return str(self._get_state(job_descriptor))
 
     def request_cancel(self, job_descriptor: ShorJobDescriptor):
@@ -77,9 +72,9 @@ class _QTasks(Verbose):
             return str(QResponse(key,
                                  status=QStatus.JOB_NOT_FOUND,
                                  server_response="Job not found. nothing to cancel"))
-        self._locks[key].acquire_write()
+        self._rw_lock.acquire_write()
         self._cancellation_events[key].set()
-        self._locks[key].release_write()
+        self._rw_lock.release_write()
         return str(QResponse(key,
                              status=QStatus.CANCELLED,
                              server_response="Cancelling job"))
@@ -91,23 +86,21 @@ class _QTasks(Verbose):
             return str(QResponse(key, status=QStatus.JOB_NOT_FOUND))
         return str(state)
 
-    @globally_locked
     def _submit_job(self, job_descriptor: ShorJobDescriptor):
         k = str(job_descriptor)
-        self._locks[k] = RWLock()
-        self._locks[k].acquire_write()
+        self._rw_lock.acquire_write()
         self._cancellation_events[k] = Event()
         self._job_states[k] = QResponse(key=k, status=QStatus.REQUESTED)
         self._job_queue.put(job_descriptor)
-        self._locks[k].release_write()
+        self._rw_lock.release_write()
 
     def _get_state(self, job_descriptor: ShorJobDescriptor) -> QResponse:
         key = str(job_descriptor)
         state = None
-        self._locks[key].acquire_read()
+        self._rw_lock.acquire_read()
         if key in self._job_states:
             state = self._job_states[key]
-        self._locks[key].release_read()
+        self._rw_lock.release_read()
         return state
 
     def _update_status(self,
@@ -125,7 +118,7 @@ class _QTasks(Verbose):
         key = str(job_descriptor)
         self.logger.debug("In update_status for job {}. status: {}, queue: {}, error: {}, results: {}"
                           "".format(key, status, place_in_queue, error, results))
-        self._locks[key].acquire_write()
+        self._rw_lock.acquire_write()
         self._job_states[key].status = status
         self._job_states[key].update_response_from_status()
         if status == QStatus.QUEUED:
@@ -134,7 +127,7 @@ class _QTasks(Verbose):
             self._job_states[key].error = error
         elif status == QStatus.DONE:
             self._job_states[key].result = results
-        self._locks[key].release_write()
+        self._rw_lock.release_write()
 
     def _update_status_by_job(self, job_descriptor: ShorJobDescriptor, job, circ):
         status = from_job_status(job.status())
@@ -192,9 +185,9 @@ class _QTasks(Verbose):
     def _do_job(self, job_descriptor: ShorJobDescriptor):
         key = str(job_descriptor)
         self.logger.debug("In do_job for job {}".format(key))
-        self._locks[key].acquire_read()
+        self._rw_lock.acquire_read()
         cancellation_event = self._cancellation_events[key]
-        self._locks[key].release_read()
+        self._rw_lock.release_read()
         job, circ = self._start_shor_job(job_descriptor)
         if not job:
             self.logger.debug("Job {} failed to start (backend error)".format(key))
@@ -247,19 +240,16 @@ class _QTasks(Verbose):
                             'job': key,
                             'cleanup_time': QTasks.CLEANUP_TIMEOUT + int(round(time()))
                         })
-                        self._locks[key].acquire_write()
+                        self._rw_lock.acquire_write()
                         del futures[future]
                         del self._cancellation_events[key]
-                        self._locks[key].release_write()
+                        self._rw_lock.release_write()
                         done_futures += 1
                 while pending_cleanup and pending_cleanup[0]['cleanup_time'] <= int(round(time())):
                     key = pending_cleanup[0]['job']
-                    self._locks[key].acquire_write()
+                    self._rw_lock.acquire_write()
                     del self._job_states[key]
-                    self._locks[key].release_write()
-                    self._global_lock.acquire()
-                    del self._locks[key]
-                    self._global_lock.release()
+                    self._rw_lock.release_write()
                     pending_cleanup.pop(0)
                     cleaned += 1
                 if iteration == log_every_n_iterations:
