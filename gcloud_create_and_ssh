@@ -1,6 +1,6 @@
 #!/bin/bash
 
-IMAGE=qiskit-flask-matplotlib-apscheduler
+IMAGE=qiskit-flask-matplotlib-readerwriterlock
 ZONE=us-central1-a
 NAME=instance-1
 PROJECT=can-i-break-rsa-now

@@ -5,7 +5,7 @@ from qiskit.aqua.aqua_error import AquaError
 from QResponse import QResponse
 from QStatus import QStatus, Q_FINAL_STATES, from_job_status
 from queue import Queue
-from RWLock import RWLock
+from readerwriterlock import rwlock
 from ShorJobDescriptor import ShorJobDescriptor
 from threading import Thread, Event
 from time import time
@@ -15,11 +15,14 @@ import concurrent.futures
 
 def read_locked(f):
     def lock_read_run(self, *args, **kwargs):
+        if not self._r_lock.acquire(blocking=False):
+            self.logger.warning("Read-lock contested for method {}".format(f.__name__))
+        else:
+            self._r_lock.release()
         self.logger.debug("Read-locking for method {}".format(f.__name__))
-        self._rw_lock.acquire_read()
-        self.logger.debug("Read-locked for method {}".format(f.__name__))
-        ret = f(self, *args, **kwargs)
-        self._rw_lock.release_read()
+        with self._r_lock:
+            self.logger.debug("Read-locked for method {}".format(f.__name__))
+            ret = f(self, *args, **kwargs)
         self.logger.debug("Read-unlocked for method {}".format(f.__name__))
         return ret
     return lock_read_run
@@ -27,11 +30,14 @@ def read_locked(f):
 
 def write_locked(f):
     def lock_write_run(self, *args, **kwargs):
+        if not self._w_lock.acquire(blocking=False):
+            self.logger.warning("Write-lock contested for method {}".format(f.__name__))
+        else:
+            self._w_lock.release()
         self.logger.debug("Write-locking for method {}".format(f.__name__))
-        self._rw_lock.acquire_write()
-        self.logger.debug("Write-locked for method {}".format(f.__name__))
-        ret = f(self, *args, **kwargs)
-        self._rw_lock.release_write()
+        with self._w_lock:
+            self.logger.warning("Write-locked for method {}".format(f.__name__))
+            ret = f(self, *args, **kwargs)
         self.logger.debug("Write-unlocked for method {}".format(f.__name__))
         return ret
     return lock_write_run
@@ -64,7 +70,9 @@ class _QTasks(Verbose):
         self._job_queue = Queue()
         self._job_states = {}
         self._cancellation_events = {}
-        self._rw_lock = RWLock()
+        lock_generator = rwlock.RWLockFair()
+        self._r_lock = lock_generator.gen_rlock()
+        self._w_lock = lock_generator.gen_wlock()
         self._worker_thread = Thread(target=self._job_handler, daemon=True)
 
     def start(self):
