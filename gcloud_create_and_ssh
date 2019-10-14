@@ -4,6 +4,8 @@ IMAGE=qiskit-flask-matplotlib-readerwriterlock
 ZONE=us-central1-a
 NAME=instance-1
 PROJECT=can-i-break-rsa-now
+# MACHINE_TYPE=f1-micro
+MACHINE_TYPE=g1-small
 
 # If an instance already exists, just connect. Otherwise, create first.
 num_existing=$(gcloud compute instances list --project "${PROJECT}" --filter "name~${NAME}" | grep STATUS | wc -l)
@@ -12,7 +14,7 @@ if [ "$num_existing" -eq 0 ]; then
     --image-project=${PROJECT} \
     --boot-disk-device-name=${NAME} \
     --zone=${ZONE} \
-    --machine-type=f1-micro \
+    --machine-type=${MACHINE_TYPE} \
     --subnet=default \
     --network-tier=PREMIUM \
     --maintenance-policy=MIGRATE \
