@@ -40,7 +40,7 @@ class QResponse(FrozenClass):
 
     def update_backend_fields(self, backend):
         self.backend = "" if not backend else backend.name()
-        self.is_simulator = None if not backend else QFleet.is_simulator(backend)
+        self.is_simulator = False if not backend else QFleet.is_simulator(backend)
         self.n_qubits = 0 if not backend else QFleet.n_qubits(backend)
 
     def update_response_from_status(self):
