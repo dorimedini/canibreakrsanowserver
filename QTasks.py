@@ -1,6 +1,6 @@
 from QFleet import QFleet
 from qiskit import execute
-from qiskit.aqua.algorithms.single_sample.shor.shor import Shor
+from qiskit.aqua.algorithms import Shor
 from qiskit.aqua.aqua_error import AquaError
 from QResponse import QResponse
 from QStatus import QStatus, Q_FINAL_STATES, from_job_status
