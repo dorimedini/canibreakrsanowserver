@@ -1,4 +1,4 @@
 #!/bin/bash
 
 current_time=$(date +%s)
-python3 server.py 2>&1 | tee "server_log_${current_time}.txt"
+python3 server.py "$@" 2>&1 | tee "server_log_${current_time}.txt"
