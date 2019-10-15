@@ -110,6 +110,10 @@ class _QTasks(Verbose):
             return str(QResponse(key, status=QStatus.JOB_NOT_FOUND))
         return str(state)
 
+    def request_backend_list(self):
+        fleet = QFleet()
+        return fleet.get_backends_list_json()
+
     @write_locked
     def _fire_cancel_event(self, key):
         self._cancellation_events[key].set()

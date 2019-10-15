@@ -1,3 +1,4 @@
+import json
 from QLogin import QLogin
 from qiskit import IBMQ
 
@@ -44,15 +45,25 @@ class QFleet(object):
             return best_real
         return best_sim
 
+    def get_backends_list_json(self):
+        return json.dumps([{
+            'name': str(backend.name()),
+            'simulator': bool(QFleet.is_simulator(backend)),
+            'n_qubits': int(QFleet.n_qubits(backend)),
+            'pending_jobs': int(self._pending_jobs(backend))
+        } for backend in self.get_backends_list()])
+
+    def get_backends_list(self):
+        return [backend for provider in self._providers for backend in self._backends[str(provider)]]
+
     def get_best_backend(self, min_qubits, allow_simulator):
         candidates = []
-        for provider in self._providers:
-            for backend in self._backends[str(provider)]:
-                if self._is_viable(backend, min_qubits, allow_simulator):
-                    print("Adding backend with {} pending jobs ({} qubits)"
-                          "".format(self._pending_jobs(backend),
-                                    QFleet.n_qubits(backend)))
-                    candidates.append(backend)
+        for backend in self.get_backends_list():
+            if self._is_viable(backend, min_qubits, allow_simulator):
+                print("Adding backend with {} pending jobs ({} qubits)"
+                      "".format(self._pending_jobs(backend),
+                                QFleet.n_qubits(backend)))
+                candidates.append(backend)
         if not candidates:
             print("No backend has at least {} qubits!".format(min_qubits))
             return None
@@ -64,8 +75,7 @@ class QFleet(object):
         return chosen
 
     def has_viable_backend(self, min_qubits, allow_simulator):
-        for provider in self._providers:
-            for backend in self._backends[str(provider)]:
-                if self._is_viable(backend, min_qubits, allow_simulator):
-                    return True
+        for backend in self.get_backends_list():
+            if self._is_viable(backend, min_qubits, allow_simulator):
+                return True
         return False

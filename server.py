@@ -25,6 +25,12 @@ def cancel(n, a):
     return tasks.request_cancel(ShorJobDescriptor(request.remote_addr, n, a))
 
 
+@app.route('/get_backends')
+def get_backends():
+    tasks = QTasks()
+    return tasks.request_backend_list()
+
+
 def dump_api_token(token):
     with open(IBMQ_TOKEN_FILENAME, 'w') as file:
         file.write(token)
