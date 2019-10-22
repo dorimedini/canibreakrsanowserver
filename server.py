@@ -38,6 +38,7 @@ def dump_api_token(token):
 
 if __name__ == "__main__":
     parser = ArgumentParser(description='"Can I break RSA now?" server')
+    parser.add_argument('-p', '--port', type=str)
     parser.add_argument('-t', '--api-token', type=str)
     parser.add_argument('-H', '--host', type=str, default='0.0.0.0')
     args = parser.parse_args()
@@ -45,8 +46,9 @@ if __name__ == "__main__":
     if args.api_token:
         dump_api_token(args.api_token)
 
+    host = "{}:{}".format(args.host, args.port)
     app_thread = Thread(target=app.run,
-                        kwargs={'host': args.host, 'use_reloader': False},
+                        kwargs={'host': host, 'use_reloader': False},
                         daemon=True)
     app_thread.start()
 
